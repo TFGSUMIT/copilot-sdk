@@ -774,8 +774,10 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         Dictionary<string, Func<string, Task<string>>>? transformCallbacks,
         bool hasHooks,
         string callerName,
-        bool replaceExisting = false)
+        bool replaceExisting,
+        out CopilotSession? replacedSession)
     {
+        replacedSession = null;
         var setupTimestamp = Stopwatch.GetTimestamp();
         var session = new CopilotSession(
             sessionId,
@@ -810,7 +812,16 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         session.RegisterBearerTokenProviders(BuildBearerTokenCallbacks(config));
         if (replaceExisting)
         {
-            _sessions[session.SessionId] = session;
+            CopilotSession? displacedSession = null;
+            _sessions.AddOrUpdate(
+                session.SessionId,
+                session,
+                (_, current) =>
+                {
+                    displacedSession = current;
+                    return session;
+                });
+            replacedSession = displacedSession;
         }
         else if (!_sessions.TryAdd(session.SessionId, session))
         {
@@ -1128,7 +1139,9 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                 config,
                 transformCallbacks,
                 hasHooks,
-                "CopilotClient.CreateSessionAsync");
+                "CopilotClient.CreateSessionAsync",
+                replaceExisting: false,
+                out _);
         }
         try
         {
@@ -1228,7 +1241,9 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
                         config,
                         transformCallbacks,
                         hasHooks,
-                        "CopilotClient.CreateSessionAsync");
+                        "CopilotClient.CreateSessionAsync",
+                        replaceExisting: false,
+                        out _);
                 }
             };
 
@@ -1344,7 +1359,8 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
             transformCallbacks,
             hasHooks,
             "CopilotClient.ResumeSessionAsync",
-            replaceExisting: true);
+            replaceExisting: true,
+            out var previousSession);
         try
         {
             var (traceparent, tracestate) = TelemetryHelpers.GetTraceContext();
@@ -1443,7 +1459,15 @@ public sealed partial class CopilotClient : IDisposable, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            session.RemoveFromClient();
+            if (previousSession is null)
+            {
+                session.RemoveFromClient();
+            }
+            else
+            {
+                _sessions.TryUpdate(sessionId, previousSession, session);
+            }
+
             if (ex is not OperationCanceledException)
             {
                 LoggingHelpers.LogTiming(_logger, LogLevel.Warning, ex,

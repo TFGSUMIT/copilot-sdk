@@ -216,7 +216,7 @@ public sealed class ClientSessionLifetimeTests
     }
 
     [Fact]
-    public async Task Failed_ResumeSessionAsync_Removes_Replacement_Registration()
+    public async Task Failed_ResumeSessionAsync_Restores_Previous_Registration()
     {
         await using var server = await FakeCopilotServer.StartAsync();
         await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForUri(server.Url) });
@@ -234,8 +234,8 @@ public sealed class ClientSessionLifetimeTests
             OnPermissionRequest = PermissionHandler.ApproveAll
         }));
 
-        AssertSessionCount(client, sessions: 0);
-        Assert.Null(GetTrackedSession(client, sessionId));
+        AssertSessionCount(client, sessions: 1);
+        Assert.Same(session, GetTrackedSession(client, sessionId));
         Assert.Equal("message-1", await session.SendAsync("The original session remains active."));
 
         await session.DisposeAsync();
